@@ -1,6 +1,36 @@
 # repo-intelligence-layer
 
-An autonomous code-analysis agent for TypeScript/React(-Native) codebases. It watches a repository for changes, analyzes each `.ts`/`.tsx` file with a local LLM (via [Ollama](https://ollama.com)) plus a TypeScript AST parser, and builds a searchable **knowledge graph** of the codebase — files, exports, components, hooks, dependencies, and routes — exposed through a live web dashboard and a CLI query tool.
+**repo-intelligence-layer is not just another dependency graph.** It builds a semantic knowledge layer over a codebase so autonomous coding agents (Claude Code, Gemini CLI, and similar) can answer architectural questions without repeatedly reading thousands of lines of source. Instead of consuming raw files, agents query compact semantic metadata — dramatically reducing context usage while preserving architectural understanding.
+
+Mechanically: it's an autonomous code-analysis agent for TypeScript/React(-Native) codebases. It watches a repository for changes, analyzes each `.ts`/`.tsx` file with a local LLM (via [Ollama](https://ollama.com)) plus a TypeScript AST parser, and builds a searchable **knowledge graph** of the codebase — files, exports, components, hooks, dependencies, and routes — exposed through a live web dashboard and a CLI query tool.
+
+## Designed for Autonomous Agents
+
+Unlike traditional static-analysis tools built for human readers, this project is designed around autonomous coding agents that need to act on a codebase without reading all of it first.
+
+Instead of asking an LLM to inspect hundreds of files to understand a feature, agents query the knowledge graph first, decide what's actually relevant from the identity cards (see below), and only then open the two or three files that matter.
+
+**Example** — "Add a cache layer to question management":
+
+| | |
+|---|---|
+| **Traditional workflow** | read `question.ts` → read `question-manager.ts` → read `question-service.ts` → read `database.ts` → read a dozen more related files just to build a mental model |
+| **repo-intelligence-layer workflow** | `query("question")` → inspect the identity cards of the matches → determine the 2 relevant modules → read only those |
+
+The knowledge graph is treated as the primary interface, while the source code becomes a secondary data source, read only when the graph says it's necessary.
+
+## Identity Cards
+
+Instead of exposing raw source files to an LLM, every analyzed file gets a compact semantic identity — printed via `node scripts/depencies.js file <path>` and stored in `knowledge_graph.json`:
+
+- Category & Role (e.g. `CRUD Service`, screen, hook)
+- Framework
+- Purpose (one-sentence LLM summary, from the JSON sidecar)
+- Risk & Importance (deterministic, based on dependents/exports/calls)
+- Dependents & Stability (commits since the file was last touched)
+- Objective AST metrics (exports, functions, hooks, components, entities)
+
+This lets an agent decide whether a file is worth reading at all before spending context on it.
 
 ## What it does
 
@@ -94,3 +124,15 @@ ai-reports/
 - The dashboard UI and the LLM prompts in `analysis.tsx` are written in Turkish (`lang="tr"`, prompts explicitly request Turkish output); this README documents the tool in English.
 - `scripts/depencies.js` is the actual filename in this repo (note the missing "d" — it's a typo for "dependencies.js"); invoke it as shown above.
 - The categorization logic in the dashboard's dependency graph (`categoryOf`) and in `scripts/depencies.js` (`categorizeNode`) assumes a `src/app`, `src/components`, `src/hooks`, `src/services`, `src/theme`, `src/i18n` layout — adjust these if analyzing a repo with a different structure.
+
+## Roadmap
+
+- [x] AST extraction
+- [x] Semantic purpose generation
+- [x] Dependency graph
+- [x] Identity cards
+- [x] Impact analysis
+- [ ] Incremental AI change summaries
+- [ ] Semantic evolution history
+- [ ] Cross-repository knowledge graphs
+- [ ] MCP server
