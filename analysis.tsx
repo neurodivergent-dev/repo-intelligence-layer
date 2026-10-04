@@ -504,61 +504,13 @@ async function analyzeFile(file: string, state: FileState) {
 
   console.log(`\n⏳ İNCELENİYOR: ${rel}`);
 
-  let res: Response;
-  try {
-    res = await fetch(OLLAMA_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: MODEL,
-        prompt: `Sen kıdemli bir yazılım mimarısın. Aşağıdaki kod dosyasını incele. LÜTFEN SADECE TÜRKÇE YANIT VER. Mimarideki eksikleri, gereksiz render'ları ve iyileştirmeleri Markdown formatında raporla:\n\nKod:\n${content}`,
-        stream: true,
-        think: false,
-      }),
-    });
-  } catch (error) {
-    console.error(`❌ Hata: Ollama'ya bağlanılamadı (${OLLAMA_URL}).`);
-    status.current = null;
-    broadcast();
-    return;
-  }
+  let fullReport = "> Hızlı indeksleme modu devrede. Mimari Markdown raporu oluşturulması es geçildi.\n\nSadece yapısal AST analizi ve semantik (JSON) kimlik oluşturuluyor...";
+  status.current!.streamText = fullReport;
+  broadcast();
 
-  if (!res.ok || !res.body) {
-    console.error(`❌ Hata: Sunucuyla iletişim kurulamadı.`);
-    status.current = null;
-    broadcast();
-    return;
-  }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let fullReport = "";
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    const chunk = decoder.decode(value, { stream: true });
-    const lines = chunk.split("\n").filter((line) => line.trim() !== "");
-
-    for (const line of lines) {
-      try {
-        const parsed = JSON.parse(line);
-        if (parsed.response) {
-          process.stdout.write(parsed.response);
-          fullReport += parsed.response;
-          status.current!.streamText += parsed.response;
-          broadcast();
-        }
-      } catch {
-        // Yarım gelen JSON parçalarını sessizce es geç
-      }
-    }
-  }
-
-  mkdirSync(dirname(reportPath), { recursive: true }); // uzun süren istek boyunca klasör bir şekilde kaybolduysa diye tekrar garanti et
+  mkdirSync(dirname(reportPath), { recursive: true });
   writeFileSync(reportPath, fullReport);
-  console.log(`\n✅ RAPOR YAZILDI: ${reportPath}`);
+  console.log(`\n✅ RAPOR ATLANDI: ${reportPath}`);
   logEvent("📖", `Rapor oluşturuldu: ${rel}`);
 
   const dependencies = extractDependencies(content).map((spec) => resolveLocalImport(file, spec) ?? spec);

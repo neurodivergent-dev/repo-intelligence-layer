@@ -16,8 +16,8 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
-const REPO_ROOT = path.join(__dirname, '..');
-const GRAPH_PATH = path.join(__dirname, '..', 'ai-reports', 'knowledge_graph.json');
+const REPO_ROOT = process.cwd();
+const GRAPH_PATH = path.join(process.cwd(), 'ai-reports', 'knowledge_graph.json');
 const EMBED_CACHE_PATH = path.join(__dirname, '..', 'ai-reports', 'embeddings_cache.json');
 const OLLAMA_HOST = (process.env.OLLAMA_HOST || 'http://localhost:11434').replace(/\/$/, '');
 const OLLAMA_EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL || 'nomic-embed-text';
@@ -653,6 +653,11 @@ switch (cmd) {
       process.exit(1);
     });
     break;
+  case 'i18n': {
+    const { queryI18n } = require('./i18n-indexer');
+    queryI18n(process.argv.slice(3).join(' '));
+    break;
+  }
   default:
     console.log(`Bilinmeyen komut: ${cmd}`);
     process.exit(1);
