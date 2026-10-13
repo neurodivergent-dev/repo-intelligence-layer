@@ -14,14 +14,15 @@ const POLL_INTERVAL_MS = 5000;
 const DASHBOARD_PORT = 5959;
 
 // Sürekli çalışması gereken bir ajan için: beklenmedik bir hata tüm süreci öldürmesin
-process.on("uncaughtException", (err) => console.error("❌ Yakalanmamış hata (süreç devam ediyor):", err));
-process.on("unhandledRejection", (err) => console.error("❌ Yakalanmamış promise reddi (süreç devam ediyor):", err));
+process.on("uncaughtException", (err) => console.error("[HATA] Yakalanmamış hata (süreç devam ediyor):", err));
+process.on("unhandledRejection", (err) => console.error("[HATA] Yakalanmamış promise reddi (süreç devam ediyor):", err));
 
 let GIT_COMMIT = "unknown";
 try {
   GIT_COMMIT = execSync("git rev-parse HEAD", { cwd: process.cwd() }).toString().trim();
-} catch {
+} catch (error) {
   // git repo değil ya da henüz commit yok
+  GIT_COMMIT = "unknown";
 }
 
 // ---------- Dosya tarama ----------
@@ -359,7 +360,8 @@ Kurallar:
     if (typeof data.response !== "string") return null;
     const cleaned = stripRepetitionLoop(data.response);
     return cleaned.length > 0 ? cleaned : null;
-  } catch {
+  } catch (error) {
+    console.warn("[ÖZET] Deep summary oluşturulamadı:", error);
     return null;
   }
 }
@@ -371,8 +373,9 @@ function persistDeepSummary(rel: string, summary: string) {
     const data = JSON.parse(readFileSync(sidecarPath, "utf-8"));
     data.semantic = { ...data.semantic, deepSummary: summary };
     writeFileSync(sidecarPath, JSON.stringify(data, null, 2));
-  } catch {
+  } catch (error) {
     // sidecar bozuksa özet sadece bu istekte döner, diske yazılamaz
+    console.warn("[SIDECAR] Özet diske yazılamadı:", error);
   }
 }
 
@@ -458,8 +461,8 @@ function rebuildKnowledgeGraph() {
       if (data && typeof data.file === "string") {
         nodes[data.file] = { ...data, importedBy: [] as string[] };
       }
-    } catch {
-      // bozuk sidecar dosyasını atla
+    } catch (err) {
+      console.warn(`[SIDECAR] Bozuk dosya atlandı: ${f}`);
     }
   }
 
@@ -502,7 +505,7 @@ async function analyzeFile(file: string, state: FileState) {
   status.queue = status.queue.filter((f) => f !== rel);
   broadcast();
 
-  console.log(`\n⏳ İNCELENİYOR: ${rel}`);
+  console.log(`\n[ANALİZ] İnceleniyor: ${rel}`);
 
   let fullReport = "> Hızlı indeksleme modu devrede. Mimari Markdown raporu oluşturulması es geçildi.\n\nSadece yapısal AST analizi ve semantik (JSON) kimlik oluşturuluyor...";
   status.current!.streamText = fullReport;
@@ -510,8 +513,8 @@ async function analyzeFile(file: string, state: FileState) {
 
   mkdirSync(dirname(reportPath), { recursive: true });
   writeFileSync(reportPath, fullReport);
-  console.log(`\n✅ RAPOR ATLANDI: ${reportPath}`);
-  logEvent("📖", `Rapor oluşturuldu: ${rel}`);
+  console.log(`\n[RAPOR] Kaydedildi: ${reportPath}`);
+  logEvent("[RAPOR]", `Rapor oluşturuldu: ${rel}`);
 
   const dependencies = extractDependencies(content).map((spec) => resolveLocalImport(file, spec) ?? spec);
   const facts = safeAnalyzeWithAst(file, content);
@@ -521,10 +524,10 @@ async function analyzeFile(file: string, state: FileState) {
     : dependencies.some((d) => d === "react" || d.startsWith("react/"))
       ? "React"
       : "TypeScript";
-  logEvent("🌳", `AST oluşturuldu: ${rel} (${facts.objective.functions} fonksiyon, ${facts.entities.length} entity)`);
+  logEvent("[AST]", `AST oluşturuldu: ${rel} (${facts.objective.functions} fonksiyon, ${facts.entities.length} entity)`);
 
   const sidecar = await extractSidecarViaLLM(rel, facts, dependencies);
-  logEvent("🧠", `Semantic bilgi çıkarıldı: ${rel}`);
+  logEvent("[SEMANTİK]", `Semantic bilgi çıkarıldı: ${rel}`);
 
   const sidecarPath = join(REPORTS_DIR, `${rel}.json`);
   mkdirSync(dirname(sidecarPath), { recursive: true });
@@ -544,7 +547,7 @@ async function analyzeFile(file: string, state: FileState) {
       2
     )
   );
-  if (!sidecar) console.warn(`⚠️  purpose LLM'den alınamadı: ${rel} (objective/entities parser'dan geldiği için yine de dolu)`);
+  if (!sidecar) console.warn(`[UYARI] purpose LLM'den alınamadı: ${rel} (objective/entities parser'dan geldiği için yine de dolu)`);
 
   state[rel] = { hash: hashContent(content), lastAnalyzed: Date.now(), reportPath: relPath(reportPath) };
   saveState(state);
@@ -557,7 +560,7 @@ async function analyzeFile(file: string, state: FileState) {
     preview: fullReport.slice(0, 240),
   });
   status.completed = status.completed.slice(0, 30);
-  logEvent("✅", `Analiz tamamlandı: ${rel}`);
+  logEvent("[TAMAM]", `Analiz tamamlandı: ${rel}`);
   broadcast();
 }
 
@@ -566,8 +569,8 @@ async function watchLoop() {
   mkdirSync(REPORTS_DIR, { recursive: true });
   const state = loadState();
 
-  console.log("🤖 Otonom ajan başlatıldı. Değişen-dosya bazlı sürekli tarama modunda.");
-  console.log(`📊 Dashboard: http://localhost:${DASHBOARD_PORT}`);
+  console.log("[AJAN] Otonom analiz katmanı başlatıldı. Değişen-dosya bazlı sürekli tarama modunda.");
+  console.log(`[DASHBOARD] http://localhost:${DASHBOARD_PORT}`);
 
   while (true) {
     try {
@@ -587,26 +590,26 @@ async function watchLoop() {
       broadcast();
 
       if (changed.length > 0) {
-        console.log(`\n🔎 ${changed.length} değişen dosya bulundu, analiz ediliyor...`);
+        console.log(`\n[TARAMA] ${changed.length} değişen dosya bulundu, analiz ediliyor...`);
         for (const file of changed) {
           try {
             await analyzeFile(file, state);
           } catch (error) {
-            console.error(`❌ ${relPath(file)} analiz edilirken beklenmedik hata, atlanıyor:`, error);
+            console.error(`[HATA] ${relPath(file)} analiz edilirken beklenmedik hata, atlanıyor:`, error);
             status.current = null;
             broadcast();
           }
           rebuildKnowledgeGraph(); // her dosyadan sonra artımlı güncelle, tüm turu beklemeden
-          logEvent("🔗", `Bilgi grafiği güncellendi: ${relPath(file)}`);
+          logEvent("[GRAFİK]", `Bilgi grafiği güncellendi: ${relPath(file)}`);
         }
-        console.log(`\n🧠 knowledge_graph.json güncellendi.`);
+        console.log(`\n[BİLGİ GRAFİĞİ] knowledge_graph.json güncellendi.`);
       }
 
       status.cycles += 1;
       status.idle = true;
       broadcast();
     } catch (error) {
-      console.error("❌ Tarama turunda beklenmedik hata, döngü devam ediyor:", error);
+      console.error("[HATA] Tarama turunda beklenmedik hata, döngü devam ediyor:", error);
     }
 
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
@@ -620,6 +623,7 @@ const DASHBOARD_HTML = `<!doctype html>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>AI Kod Analiz Ajanı</title>
+<script src="https://unpkg.com/3d-force-graph"></script>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -723,12 +727,15 @@ const DASHBOARD_HTML = `<!doctype html>
   .legend-chip.off { opacity: 0.35; }
   .legend-swatch { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
   .graph-main { flex: 1; display: flex; overflow: hidden; }
-  .graph-canvas-wrap { position: relative; flex: 1; overflow: hidden; background: #0b0e14; }
-  #graphSvg { width: 100%; height: 100%; display: block; cursor: grab; }
-  #graphSvg.dragging { cursor: grabbing; }
-  .graph-edge { stroke: #2a3444; stroke-width: 1; fill: none; }
-  .graph-node circle { stroke: #0b0e14; stroke-width: 1.5; cursor: pointer; }
-  .graph-node text { fill: #d5dae3; font-size: 10px; pointer-events: none; }
+  .graph-canvas-wrap { position: relative; flex: 1; overflow: hidden; background: #07090e; cursor: grab; }
+  .graph-canvas-wrap:active { cursor: grabbing; }
+  #graphSvg { width: 100%; height: 100%; display: block; }
+  .graph-edge { stroke: #263346; stroke-width: 1; stroke-opacity: 0.22; fill: none; transition: stroke-opacity 0.2s, stroke 0.2s; }
+  .graph-edge.active { stroke: #ffb454 !important; stroke-width: 1.8 !important; stroke-opacity: 0.9 !important; }
+  .graph-node circle { stroke: #0b0e14; stroke-width: 1.5; cursor: pointer; transition: transform 0.15s, stroke 0.15s; }
+  .graph-node circle:hover { stroke: #ffb454; stroke-width: 2.5; }
+  .graph-node text { fill: #c0c7d4; font-size: 10px; font-weight: 500; pointer-events: none; text-shadow: 0 1px 3px rgba(0,0,0,0.8); }
+  .graph-zoom-hint { position: absolute; bottom: 14px; left: 16px; font-size: 11px; color: #505c70; background: rgba(11,14,20,0.8); padding: 4px 10px; border-radius: 6px; pointer-events: none; border: 1px solid #1a2230; }
   .graph-tooltip {
     position: absolute; pointer-events: none; background: #10141c; border: 1px solid #232b3a;
     border-radius: 8px; padding: 10px 12px; font-size: 12px; max-width: 280px; line-height: 1.5;
@@ -770,9 +777,9 @@ const DASHBOARD_HTML = `<!doctype html>
 </head>
 <body>
 <header>
-  <h1>🤖 AI Kod Analiz Ajanı — gemma4:26b</h1>
+  <h1>AI Kod Analiz Ajanı — gemma4:26b</h1>
   <div style="display:flex; align-items:center; gap:10px;">
-    <div class="badge" id="graphBtn" style="cursor:pointer;">🕸️ Bağımlılık Grafiği</div>
+    <div class="badge" id="graphBtn" style="cursor:pointer;">Bağımlılık Grafiği</div>
     <div class="badge"><span class="dot" id="statusDot"></span><span id="statusText">bağlanıyor...</span></div>
   </div>
 </header>
@@ -821,18 +828,23 @@ const DASHBOARD_HTML = `<!doctype html>
 <div class="overlay" id="graphOverlay">
   <div class="modal graph-modal">
     <div class="modal-header">
-      <div class="modal-title">🕸️ Dosya Bağımlılık Grafiği</div>
+      <div class="modal-title">Dosya Bağımlılık Grafiği</div>
       <button class="modal-close" id="graphClose">✕</button>
     </div>
     <div class="modal-body">
       <div class="graph-toolbar">
         <div class="graph-legend" id="graphLegend"></div>
-        <div style="margin-left:auto; font-size:11px; color:#6b7484;" id="graphMeta"></div>
+        <div style="margin-left:auto; display:flex; align-items:center; gap:12px;">
+          <button id="toggle3dBtn" style="background:#141a24; border:1px solid #ffb454; color:#ffb454; padding:4px 12px; border-radius:16px; font-size:11px; font-weight:600; cursor:pointer;">3D Uzay Modu</button>
+          <div style="font-size:11px; color:#6b7484;" id="graphMeta"></div>
+        </div>
       </div>
       <div class="graph-main">
         <div class="graph-canvas-wrap">
           <svg id="graphSvg"></svg>
+          <div id="graph3dContainer" style="position:absolute; inset:0; display:none; width:100%; height:100%;"></div>
           <div class="graph-tooltip" id="graphTooltip"></div>
+          <div class="graph-zoom-hint" id="graphZoomHint">Tekerlek: Yakınlaştır · Sürükle: Gezin / Node Taşı</div>
         </div>
         <div class="graph-detail-panel" id="graphDetailPanel">
           <div id="gdpEmpty" class="gdp-empty">Detay görmek için bir dosyaya tıkla</div>
@@ -858,11 +870,11 @@ const DASHBOARD_HTML = `<!doctype html>
               <div id="gdpEntities"></div>
             </div>
             <div class="gdp-section">
-              <div class="gdp-label">🧠 AI Özeti</div>
+              <div class="gdp-label">AI Özeti</div>
               <div class="gdp-ai-summary" id="gdpAiSummary"></div>
-              <button class="gdp-ai-btn" id="gdpAiBtn">🧠 Derin AI Özeti Oluştur</button>
+              <button class="gdp-ai-btn" id="gdpAiBtn">Derin AI Özeti Oluştur</button>
             </div>
-            <button class="gdp-report-btn" id="gdpOpenReport">📄 Tam Raporu Aç</button>
+            <button class="gdp-report-btn" id="gdpOpenReport">Tam Raporu Aç</button>
           </div>
         </div>
       </div>
@@ -913,7 +925,7 @@ const DASHBOARD_HTML = `<!doctype html>
     const el = document.getElementById("searchResults");
     el.innerHTML = matches.length
       ? matches.map(n => \`<li data-path="ai-reports/\${n.file}.md" data-file="\${n.file}">
-          <div class="fname">📄 \${n.file} \${(n.objective && n.objective.route) ? \`<span class="importance-badge">\${n.objective.route}</span>\` : ""} <span class="importance-badge">· \${n.importance || 0} bağımlı</span></div>
+          <div class="fname">\${n.file} \${(n.objective && n.objective.route) ? \`<span class="importance-badge">\${n.objective.route}</span>\` : ""} <span class="importance-badge">· \${n.importance || 0} bağımlı</span></div>
           <div class="fmeta">\${(n.semantic && n.semantic.purpose) || "amaç bilgisi yok"} <span style="color:#4a5262;">· \${(n.objective && n.objective.framework) || ""}</span></div>
           <div class="preview">\${(n.entities || []).map(en => en.name).join(", ")}\${(n.graph && n.graph.renders && n.graph.renders.length) ? " · render: " + n.graph.renders.slice(0, 6).join(", ") : ""}</div>
         </li>\`).join("")
@@ -966,7 +978,7 @@ const DASHBOARD_HTML = `<!doctype html>
 
     const q = document.getElementById("queueList");
     q.innerHTML = s.queue.length
-      ? s.queue.map(f => \`<div class="queue-item">⏳ \${f}</div>\`).join("")
+      ? s.queue.map(f => \`<div class="queue-item">\${f}</div>\`).join("")
       : '<div class="empty">değişen dosya yok</div>';
 
     const events = s.events || [];
@@ -986,7 +998,7 @@ const DASHBOARD_HTML = `<!doctype html>
     const list = document.getElementById("completedList");
     list.innerHTML = s.completed.length
       ? s.completed.map(c => \`<li data-path="\${c.reportPath}" data-file="\${c.file}">
-          <div class="fname">✅ \${c.file}</div>
+          <div class="fname">\${c.file}</div>
           <div class="fmeta">\${new Date(c.finishedAt).toLocaleTimeString("tr-TR")} · \${c.reportPath}</div>
           <div class="preview md">\${renderMarkdown(c.preview)}…</div>
         </li>\`).join("")
@@ -1043,11 +1055,11 @@ const DASHBOARD_HTML = `<!doctype html>
   };
 
   function categoryOf(file) {
-    if (file.indexOf("src/app/") === 0 || file.indexOf("src/components/") === 0) return "ui";
-    if (file.indexOf("src/services/db/") === 0) return "database";
+    if (file.indexOf("src/app/") === 0 || file.indexOf("src/screens/") === 0 || file.indexOf("src/components/") === 0 || file.indexOf("cms/src/components/") === 0) return "ui";
+    if (file.indexOf("src/services/db/") === 0 || file.indexOf("src/services/database/") === 0 || file.indexOf("supabase/") === 0) return "database";
     if (file.indexOf("src/hooks/") === 0) return "hooks";
-    if (file.indexOf("src/services/") === 0) return "services";
-    if (file.indexOf("src/theme/") === 0 || file === "src/context/ThemeContext.tsx") return "theme";
+    if (file.indexOf("src/services/") === 0 || file.indexOf("cms/src/lib/") === 0) return "services";
+    if (file.indexOf("src/theme/") === 0 || file.indexOf("src/context/") === 0 || file === "src/context/ThemeContext.tsx") return "theme";
     if (file.indexOf("src/i18n/") === 0 || file.indexOf("src/constants/") === 0) return "i18n";
     return "root";
   }
@@ -1063,8 +1075,12 @@ const DASHBOARD_HTML = `<!doctype html>
   window.addEventListener("mousemove", (ev) => {
     if (!draggedNode) return;
     const rect = draggedNode.svg.getBoundingClientRect();
-    draggedNode.d.x = (ev.clientX - rect.left) * (draggedNode.width / rect.width);
-    draggedNode.d.y = (ev.clientY - rect.top) * (draggedNode.height / rect.height);
+    const zoom = draggedNode.zoom ? draggedNode.zoom() : 1;
+    const pan = draggedNode.pan ? draggedNode.pan() : { x: 0, y: 0 };
+    const rawX = (ev.clientX - rect.left) * (draggedNode.width / rect.width);
+    const rawY = (ev.clientY - rect.top) * (draggedNode.height / rect.height);
+    draggedNode.d.x = (rawX - pan.x) / zoom;
+    draggedNode.d.y = (rawY - pan.y) / zoom;
     draggedNode.g.setAttribute("transform", "translate(" + draggedNode.d.x + "," + draggedNode.d.y + ")");
     (draggedNode.nodeEdgeMap.get(draggedNode.d.id) || []).forEach((rec) => {
       rec.line.setAttribute("x1", rec.s.x); rec.line.setAttribute("y1", rec.s.y);
@@ -1114,31 +1130,48 @@ const DASHBOARD_HTML = `<!doctype html>
 
   function layoutDepGraph(nodes, edges, width, height) {
     const idIndex = new Map(nodes.map((d, i) => [d.id, i]));
+    
+    // Kategori merkez çekim noktaları (Cluster Anchors) - Ekranın farklı bölgelerine dağıt
+    const CLUSTER_CENTERS = {
+      ui:       { x: width * 0.28, y: height * 0.32 }, // Sol üst (UI & Ekranlar)
+      services: { x: width * 0.72, y: height * 0.38 }, // Sağ üst (Services & LLM)
+      theme:    { x: width * 0.48, y: height * 0.46 }, // Merkez (Theme & Context omurgası)
+      database: { x: width * 0.68, y: height * 0.76 }, // Sağ alt (Veritabanı & Supabase)
+      hooks:    { x: width * 0.30, y: height * 0.68 }, // Sol alt (Hooks)
+      i18n:     { x: width * 0.50, y: height * 0.82 }, // Alt orta (i18n & Sabitler)
+      root:     { x: width * 0.82, y: height * 0.18 }, // Dış çember (Yardımcı araçlar / Kök)
+    };
+
     nodes.forEach((d, i) => {
-      const angle = (i / nodes.length) * Math.PI * 2;
-      const radius = Math.min(width, height) * 0.35;
-      d.x = width / 2 + Math.cos(angle) * radius;
-      d.y = height / 2 + Math.sin(angle) * radius;
+      const anchor = CLUSTER_CENTERS[d.category] || { x: width / 2, y: height / 2 };
+      const jitterAngle = (i / nodes.length) * Math.PI * 2;
+      const jitterRadius = 60 + (i % 7) * 18;
+      d.x = anchor.x + Math.cos(jitterAngle) * jitterRadius;
+      d.y = anchor.y + Math.sin(jitterAngle) * jitterRadius;
       d.vx = 0;
       d.vy = 0;
     });
+
     const pairs = edges
       .map((e) => [idIndex.get(e.source), idIndex.get(e.target)])
       .filter((p) => p[0] !== undefined && p[1] !== undefined);
 
-    const REPULSION = 2800;
-    const LINK_DIST = 95;
-    const LINK_STRENGTH = 0.05;
-    const CENTER_STRENGTH = 0.006;
-    const DAMPING = 0.82;
+    // Daha ferah, düğümleri birbirinden uzaklaştıran fizik sabitleri
+    const REPULSION = 8500;        // 2800 -> 8500 (Düğümleri ferahça ayır)
+    const LINK_DIST = 160;         // 95 -> 160 (Bağlantı mesafesini aç)
+    const LINK_STRENGTH = 0.035;   // Yumuşak yay gerginliği
+    const CLUSTER_GRAVITY = 0.012; // Kategori kümesine sadakat kuvveti
+    const DAMPING = 0.85;
 
-    for (let iter = 0; iter < 260; iter++) {
+    for (let iter = 0; iter < 320; iter++) {
+      // 1. Düğümler arası itme kuvveti
       for (let i = 0; i < nodes.length; i++) {
         for (let j = i + 1; j < nodes.length; j++) {
           const dx = nodes[i].x - nodes[j].x;
           const dy = nodes[i].y - nodes[j].y;
-          const distSq = dx * dx + dy * dy || 0.01;
+          const distSq = dx * dx + dy * dy || 0.1;
           const dist = Math.sqrt(distSq);
+          if (dist > 380) continue; // Uzaktaki düğümleri itmeye çalışma (optimizasyon)
           const force = REPULSION / distSq;
           const fx = (dx / dist) * force;
           const fy = (dy / dist) * force;
@@ -1146,24 +1179,27 @@ const DASHBOARD_HTML = `<!doctype html>
           nodes[j].vx -= fx; nodes[j].vy -= fy;
         }
       }
+      // 2. Kenar (Edge) yay kuvveti
       for (const p of pairs) {
         const a = nodes[p[0]], b = nodes[p[1]];
         const dx = b.x - a.x;
         const dy = b.y - a.y;
-        const dist = Math.sqrt(dx * dx + dy * dy) || 0.01;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 0.1;
         const diff = (dist - LINK_DIST) * LINK_STRENGTH;
         const fx = (dx / dist) * diff;
         const fy = (dy / dist) * diff;
         a.vx += fx; a.vy += fy;
         b.vx -= fx; b.vy -= fy;
       }
+      // 3. Kategori Çekim Noktası (Cluster Gravity)
       for (const d of nodes) {
-        d.vx += (width / 2 - d.x) * CENTER_STRENGTH;
-        d.vy += (height / 2 - d.y) * CENTER_STRENGTH;
+        const anchor = CLUSTER_CENTERS[d.category] || { x: width / 2, y: height / 2 };
+        d.vx += (anchor.x - d.x) * CLUSTER_GRAVITY;
+        d.vy += (anchor.y - d.y) * CLUSTER_GRAVITY;
         d.vx *= DAMPING; d.vy *= DAMPING;
         d.x += d.vx; d.y += d.vy;
-        d.x = Math.max(24, Math.min(width - 24, d.x));
-        d.y = Math.max(24, Math.min(height - 24, d.y));
+        d.x = Math.max(30, Math.min(width - 30, d.x));
+        d.y = Math.max(30, Math.min(height - 30, d.y));
       }
     }
     return nodes;
@@ -1181,10 +1217,10 @@ const DASHBOARD_HTML = `<!doctype html>
   }
 
   function riskTier(score) {
-    if (score >= 60) return { emoji: "🔴", label: "Critical", color: "#e66767" };
-    if (score >= 30) return { emoji: "🟠", label: "High", color: "#eb6834" };
-    if (score >= 12) return { emoji: "🟡", label: "Medium", color: "#c98500" };
-    return { emoji: "🟢", label: "Low", color: "#008300" };
+    if (score >= 60) return { label: "Critical", color: "#e66767" };
+    if (score >= 30) return { label: "High", color: "#eb6834" };
+    if (score >= 12) return { label: "Medium", color: "#c98500" };
+    return { label: "Low", color: "#008300" };
   }
 
   function riskReasons(d) {
@@ -1205,11 +1241,60 @@ const DASHBOARD_HTML = `<!doctype html>
     const height = wrap.clientHeight || 640;
     svg.setAttribute("viewBox", "0 0 " + width + " " + height);
 
+    // Zoom & Pan Container
+    let zoomLevel = 1;
+    let panX = 0;
+    let panY = 0;
+    let isPanning = false;
+    let startX = 0;
+    let startY = 0;
+
+    const viewportGroup = document.createElementNS(svgNS, "g");
+    viewportGroup.setAttribute("id", "viewportGroup");
+    svg.appendChild(viewportGroup);
+
+    function updateTransform() {
+      viewportGroup.setAttribute("transform", "translate(" + panX + "," + panY + ") scale(" + zoomLevel + ")");
+    }
+
+    // Mouse Tekerleği ile Zoom
+    wrap.onwheel = (e) => {
+      e.preventDefault();
+      const rect = wrap.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      const factor = e.deltaY < 0 ? 1.15 : 0.87;
+      const newZoom = Math.max(0.3, Math.min(4.0, zoomLevel * factor));
+      panX = mouseX - (mouseX - panX) * (newZoom / zoomLevel);
+      panY = mouseY - (mouseY - panY) * (newZoom / zoomLevel);
+      zoomLevel = newZoom;
+      updateTransform();
+    };
+
+    // Arka Planı Sürükleyerek Pan (Gezinme)
+    svg.onmousedown = (e) => {
+      if (e.target.tagName === "circle" || e.target.tagName === "text") return;
+      isPanning = true;
+      startX = e.clientX - panX;
+      startY = e.clientY - panY;
+    };
+
+    window.addEventListener("mousemove", (e) => {
+      if (!isPanning) return;
+      panX = e.clientX - startX;
+      panY = e.clientY - startY;
+      updateTransform();
+    });
+
+    window.addEventListener("mouseup", () => {
+      isPanning = false;
+    });
+
     const nodeById = new Map(depGraphNodes.map((d) => [d.id, d]));
     const edgeLayer = document.createElementNS(svgNS, "g");
     const nodeLayer = document.createElementNS(svgNS, "g");
-    svg.appendChild(edgeLayer);
-    svg.appendChild(nodeLayer);
+    viewportGroup.appendChild(edgeLayer);
+    viewportGroup.appendChild(nodeLayer);
 
     const nodeEdgeMap = new Map();
     for (const e of depGraphEdges) {
@@ -1232,13 +1317,6 @@ const DASHBOARD_HTML = `<!doctype html>
 
     const tooltip = document.getElementById("graphTooltip");
 
-    function updateEdgesFor(id) {
-      (nodeEdgeMap.get(id) || []).forEach((rec) => {
-        rec.line.setAttribute("x1", rec.s.x); rec.line.setAttribute("y1", rec.s.y);
-        rec.line.setAttribute("x2", rec.t.x); rec.line.setAttribute("y2", rec.t.y);
-      });
-    }
-
     for (const d of depGraphNodes) {
       const g = document.createElementNS(svgNS, "g");
       g.setAttribute("class", "graph-node");
@@ -1255,7 +1333,7 @@ const DASHBOARD_HTML = `<!doctype html>
       circle.setAttribute("fill", CATEGORY_META[d.category].color);
       g.appendChild(circle);
 
-      if (d.importance >= 5) {
+      if (d.importance >= 4) {
         const label = document.createElementNS(svgNS, "text");
         label.textContent = d.file.split("/").pop();
         label.setAttribute("x", String(radiusOf(d) + 5));
@@ -1264,8 +1342,11 @@ const DASHBOARD_HTML = `<!doctype html>
       }
 
       g.addEventListener("mouseenter", () => {
-        (nodeEdgeMap.get(d.id) || []).forEach((rec) => rec.line.setAttribute("stroke", "#ffb454"));
+        (nodeEdgeMap.get(d.id) || []).forEach((rec) => {
+          rec.line.classList.add("active");
+        });
         circle.setAttribute("stroke", "#ffb454");
+        circle.setAttribute("stroke-width", "3");
         tooltip.innerHTML = "";
         const titleDiv = document.createElement("div");
         titleDiv.className = "gt-title";
@@ -1281,22 +1362,28 @@ const DASHBOARD_HTML = `<!doctype html>
         tooltip.appendChild(purpose);
         tooltip.style.opacity = "1";
       });
+
       g.addEventListener("mousemove", (ev) => {
         const rect = wrap.getBoundingClientRect();
         tooltip.style.left = (ev.clientX - rect.left + 16) + "px";
         tooltip.style.top = (ev.clientY - rect.top + 16) + "px";
       });
+
       g.addEventListener("mouseleave", () => {
-        (nodeEdgeMap.get(d.id) || []).forEach((rec) => rec.line.removeAttribute("stroke"));
+        (nodeEdgeMap.get(d.id) || []).forEach((rec) => {
+          rec.line.classList.remove("active");
+        });
         circle.removeAttribute("stroke");
+        circle.setAttribute("stroke-width", "1.5");
         tooltip.style.opacity = "0";
       });
+
       g.addEventListener("click", () => {
         selectNode(d);
       });
 
       g.addEventListener("mousedown", (ev) => {
-        draggedNode = { d: d, g: g, nodeEdgeMap: nodeEdgeMap, width: width, height: height, svg: svg };
+        draggedNode = { d: d, g: g, nodeEdgeMap: nodeEdgeMap, width: width, height: height, svg: svg, zoom: () => zoomLevel, pan: () => ({ x: panX, y: panY }) };
         svg.classList.add("dragging");
         ev.stopPropagation();
       });
@@ -1320,7 +1407,7 @@ const DASHBOARD_HTML = `<!doctype html>
     const score = computeRisk(d);
     const tier = riskTier(score);
     const riskBadge = document.getElementById("gdpRisk");
-    riskBadge.textContent = tier.emoji + " " + tier.label + " (" + score + ")";
+    riskBadge.textContent = tier.label + " (" + score + ")";
     riskBadge.style.background = tier.color;
 
     const formulaEl = document.getElementById("gdpRiskFormula");
@@ -1421,10 +1508,10 @@ const DASHBOARD_HTML = `<!doctype html>
     aiSummaryEl.textContent = d.deepSummary || "";
     const aiBtn = document.getElementById("gdpAiBtn");
     aiBtn.disabled = false;
-    aiBtn.textContent = d.deepSummary ? "🔄 Yeniden Oluştur" : "🧠 Derin AI Özeti Oluştur";
+    aiBtn.textContent = d.deepSummary ? "Yeniden Oluştur" : "Derin AI Özeti Oluştur";
     aiBtn.onclick = async () => {
       aiBtn.disabled = true;
-      aiBtn.textContent = "⏳ gemma4:26b düşünüyor...";
+      aiBtn.textContent = "gemma4:26b düşünüyor...";
       if (!d.deepSummary) aiSummaryEl.textContent = "İşleniyor...";
       try {
         const refreshParam = d.deepSummary ? "&refresh=1" : "";
@@ -1440,7 +1527,7 @@ const DASHBOARD_HTML = `<!doctype html>
         aiSummaryEl.textContent = "İstek başarısız oldu.";
       }
       aiBtn.disabled = false;
-      aiBtn.textContent = d.deepSummary ? "🔄 Yeniden Oluştur" : "🧠 Derin AI Özeti Oluştur";
+      aiBtn.textContent = d.deepSummary ? "Yeniden Oluştur" : "Derin AI Özeti Oluştur";
     };
 
     document.getElementById("gdpOpenReport").onclick = () => {
@@ -1456,6 +1543,14 @@ const DASHBOARD_HTML = `<!doctype html>
       const dim = hiddenCategories.has(line.dataset.sCat) || hiddenCategories.has(line.dataset.tCat);
       line.style.opacity = dim ? "0.05" : "";
     });
+    if (graph3dInstance) {
+      graph3dInstance.nodeVisibility((n) => !hiddenCategories.has(n.raw.category));
+      graph3dInstance.linkVisibility((l) => {
+        const sCat = l.source?.raw ? l.source.raw.category : l.source?.category;
+        const tCat = l.target?.raw ? l.target.raw.category : l.target?.category;
+        return !hiddenCategories.has(sCat) && !hiddenCategories.has(tCat);
+      });
+    }
   }
 
   function renderLegend() {
@@ -1484,6 +1579,103 @@ const DASHBOARD_HTML = `<!doctype html>
 
   const graphOverlayEl = document.getElementById("graphOverlay");
   let graphBuilt = false;
+  let is3DMode = false;
+  let graph3dInstance = null;
+
+  function init3DGraph() {
+    const container = document.getElementById("graph3dContainer");
+    if (!container) return;
+    if (!window.ForceGraph3D) {
+      const zoomHint = document.getElementById("graphZoomHint");
+      if (zoomHint) zoomHint.textContent = "3D kütüphanesi yükleniyor...";
+      setTimeout(init3DGraph, 300);
+      return;
+    }
+
+    const w = container.clientWidth || 1000;
+    const h = container.clientHeight || 640;
+
+    const gData = {
+      nodes: depGraphNodes.map((n) => ({
+        id: n.id,
+        name: n.file,
+        val: radiusOf(n) * 1.5,
+        color: CATEGORY_META[n.category].color,
+        raw: n,
+      })),
+      links: depGraphEdges.map((e) => ({
+        source: e.source,
+        target: e.target,
+      })),
+    };
+
+    if (!graph3dInstance) {
+      graph3dInstance = window.ForceGraph3D()(container)
+        .width(w)
+        .height(h)
+        .backgroundColor("#07090e")
+        .graphData(gData)
+        .nodeResolution(16)
+        .nodeLabel((n) => \`<div style="background:#10141c; border:1px solid #232b3a; border-radius:8px; padding:10px 12px; font-family:ui-monospace, monospace; font-size:12px; color:#d5dae3; box-shadow:0 8px 24px rgba(0,0,0,0.6); pointer-events:none; max-width:320px;"><div style="color:#ffb454; font-weight:600; margin-bottom:4px; word-break:break-all;">\${escapeHtml(n.name)}</div><div style="color:#8b95a7; font-size:11px;">\${n.raw.route ? "rota: " + escapeHtml(n.raw.route) + " · " : ""}\${n.raw.lines} satır · \${n.raw.inCount} dependents · \${n.raw.outCount} imports</div><div style="color:#b7f5c9; font-size:11px; margin-top:4px;">\${escapeHtml(n.raw.purpose || "amaç bilgisi yok")}</div></div>\`)
+        .nodeVal("val")
+        .nodeColor("color")
+        .linkColor(() => "rgba(42, 56, 76, 0.45)")
+        .linkWidth(1.2)
+        .linkOpacity(0.35)
+        .linkDirectionalParticles(2)
+        .linkDirectionalParticleSpeed(0.005)
+        .linkDirectionalParticleWidth(1.8)
+        .linkDirectionalParticleColor(() => "#ffb454")
+        .onNodeClick((node) => {
+          selectNode(node.raw);
+          const distance = 90;
+          const distRatio = 1 + distance / Math.hypot(node.x, node.y, node.z);
+          graph3dInstance.cameraPosition(
+            { x: node.x * distRatio, y: node.y * distRatio, z: node.z * distRatio },
+            node,
+            1500
+          );
+        });
+
+      window.addEventListener("resize", () => {
+        if (is3DMode && graph3dInstance) {
+          const c = document.getElementById("graph3dContainer");
+          if (c) graph3dInstance.width(c.clientWidth).height(c.clientHeight);
+        }
+      });
+    } else {
+      graph3dInstance.width(w).height(h).graphData(gData);
+    }
+
+    applyCategoryFilter();
+  }
+
+  const toggle3dBtn = document.getElementById("toggle3dBtn");
+  toggle3dBtn.addEventListener("click", () => {
+    is3DMode = !is3DMode;
+    const svgEl = document.getElementById("graphSvg");
+    const container3d = document.getElementById("graph3dContainer");
+    const zoomHint = document.getElementById("graphZoomHint");
+
+    if (is3DMode) {
+      svgEl.style.display = "none";
+      container3d.style.display = "block";
+      toggle3dBtn.textContent = "2D Harita Modu";
+      toggle3dBtn.style.borderColor = "#7dc4ff";
+      toggle3dBtn.style.color = "#7dc4ff";
+      zoomHint.textContent = "3D Uzay: Sol Tık: Döndür · Sağ Tık: Kaydır · Tekerlek: Yakınlaş · Düğüme Tıkla: Odaklan";
+      setTimeout(init3DGraph, 60);
+    } else {
+      svgEl.style.display = "block";
+      container3d.style.display = "none";
+      toggle3dBtn.textContent = "3D Uzay Modu";
+      toggle3dBtn.style.borderColor = "#ffb454";
+      toggle3dBtn.style.color = "#ffb454";
+      zoomHint.textContent = "Tekerlek: Yakınlaştır · Sürükle: Gezin / Node Taşı · Düğüme Tıkla: Detay";
+      renderDepGraph();
+    }
+  });
+
   document.getElementById("graphBtn").addEventListener("click", async () => {
     graphOverlayEl.classList.add("open");
     const graph = await loadGraph();
@@ -1496,7 +1688,11 @@ const DASHBOARD_HTML = `<!doctype html>
       graphBuilt = true;
     }
     renderLegend();
-    renderDepGraph();
+    if (is3DMode) {
+      init3DGraph();
+    } else {
+      renderDepGraph();
+    }
     document.getElementById("graphMeta").textContent = depGraphNodes.length + " dosya · " + depGraphEdges.length + " bağımlılık";
   });
   document.getElementById("graphClose").addEventListener("click", () => graphOverlayEl.classList.remove("open"));
