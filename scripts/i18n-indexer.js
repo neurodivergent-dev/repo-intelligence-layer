@@ -262,7 +262,20 @@ if (require.main === module) {
   const args = process.argv.slice(2);
   const command = args[0] || 'build';
 
-  if (command === 'build' || command === 'index') {
+  if (command === 'help' || command === '--help' || command === '-h') {
+    console.log(`
+🌐 i18n-indexer.js — Çeviri Anahtarı & Metin Arama
+
+Kullanım:
+  node .agents/repo-intelligence-layer/scripts/i18n-indexer.js [komut] [argüman]
+
+Komutlar:
+  query <metin>    Türkçe veya İngilizce metinle / anahtar ismiyle ters arama
+  build            i18n indeksini (i18n_index.json) yeniden oluşturur
+  help, -h         Bu yardım metnini gösterir
+`);
+    process.exit(0);
+  } else if (command === 'build' || command === 'index') {
     console.log('⚡ i18n İndeksi oluşturuluyor...');
     const res = buildI18nIndex();
     if (res) {

@@ -614,8 +614,32 @@ function cmdCallers(fnName) {
 
 const [, , cmd, arg] = process.argv;
 
+if (cmd === 'help' || cmd === '--help' || cmd === '-h') {
+  console.log(`
+🧠 depencies.js — Repo Intelligence Ana Bağımlılık & Bilgi Grafiği
+
+Kullanım:
+  node .agents/repo-intelligence-layer/scripts/depencies.js <komut> <argüman>
+
+Komutlar:
+  query <terim>        Dosya yolu, amaç (purpose) ve entity isimlerinde alt dize araması
+  file <dosya_yolu>    Dosyanın tam kimlik kartı (kategori, risk, satır sayısı, exportlar, kararlılık)
+  dependents <dosya>   Hedef dosyayı import eden üst modülleri listeler (kim bağımlı?)
+  deps <dosya>         Hedef dosyanın import ettiği modül ve paketleri listeler
+  callers <fonksiyon>  Belirtilen fonksiyonun çağrıldığı tüm dosyaları satır satır listeler
+  where <Bileşen>      Hedef bileşenin JSX içinde render edildiği dosyaları gösterir
+  style <Bileşen>      Bileşenin en çok kullanılan prop değerlerini özetler (ikon setleri vb.)
+  impact <dosya>       Hedef dosyanın zincirleme bağımlıları ve risk seviyesi
+  change <dosya>       Hedef dosya değişirse etkilenecek ekranlar (rotalar)
+  similar <dosya>      Yapısal / anlamsal olarak en benzer dosyalar
+  i18n <terim>         i18n ters çeviri araması
+  help, -h             Bu yardım metnini gösterir
+`);
+  process.exit(0);
+}
+
 if (!cmd || !arg) {
-  console.log('Usage: node scripts/dependencies.js <query|file|dependents|deps|callers|where|style|impact|change|similar> <term>');
+  console.log('Usage: node scripts/dependencies.js <query|file|dependents|deps|callers|where|style|impact|change|similar|help> <term>');
   process.exit(1);
 }
 
