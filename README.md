@@ -1,138 +1,155 @@
 # repo-intelligence-layer
 
-**repo-intelligence-layer is not just another dependency graph.** It builds a semantic knowledge layer over a codebase so autonomous coding agents (Claude Code, Gemini CLI, and similar) can answer architectural questions without repeatedly reading thousands of lines of source. Instead of consuming raw files, agents query compact semantic metadata — dramatically reducing context usage while preserving architectural understanding.
+**repo-intelligence-layer is not just another dependency graph.** It builds a semantic knowledge & closed-loop verification layer over a TypeScript / React(-Native) codebase so autonomous coding agents (Claude Code, Gemini CLI, Cursor, and similar) can navigate, reason, and act with architectural certainty without repeatedly burning tens of thousands of tokens reading raw source files.
 
-Mechanically: it's an autonomous code-analysis agent for TypeScript/React(-Native) codebases. It watches a repository for changes, analyzes each `.ts`/`.tsx` file with a local LLM (via [Ollama](https://ollama.com)) plus a TypeScript AST parser, and builds a searchable **knowledge graph** of the codebase — files, exports, components, hooks, dependencies, and routes — exposed through a live web dashboard and a CLI query tool.
+Instead of consuming raw files, agents query compact semantic metadata and execute deterministic guardrails — dramatically reducing context usage while preserving architectural integrity.
 
-## Designed for Autonomous Agents
+---
 
-Unlike traditional static-analysis tools built for human readers, this project is designed around autonomous coding agents that need to act on a codebase without reading all of it first.
+## Architecture & Subsystems
 
-Instead of asking an LLM to inspect hundreds of files to understand a feature, agents query the knowledge graph first, decide what's actually relevant from the identity cards (see below), and only then open the two or three files that matter.
-
-**Example** — "Add a cache layer to question management":
-
-| | |
-|---|---|
-| **Traditional workflow** | read `question.ts` → read `question-manager.ts` → read `question-service.ts` → read `database.ts` → read a dozen more related files just to build a mental model |
-| **repo-intelligence-layer workflow** | `query("question")` → inspect the identity cards of the matches → determine the 2 relevant modules → read only those |
-
-The knowledge graph is treated as the primary interface, while the source code becomes a secondary data source, read only when the graph says it's necessary.
-
-## Identity Cards
-
-Instead of exposing raw source files to an LLM, every analyzed file gets a compact semantic identity — printed via `node scripts/depencies.js file <path>` and stored in `knowledge_graph.json`:
-
-- Category & Role (e.g. `CRUD Service`, screen, hook)
-- Framework
-- Purpose (one-sentence LLM summary, from the JSON sidecar)
-- Risk & Importance (deterministic, based on dependents/exports/calls)
-- Dependents & Stability (commits since the file was last touched)
-- Objective AST metrics (exports, functions, hooks, components, entities)
-
-This lets an agent decide whether a file is worth reading at all before spending context on it.
-
-## What it does
-
-- **Continuous scanning** — polls the target directory every 5s, hashes each source file, and re-analyzes only new/changed files (`analysis.tsx`).
-- **AST-based objective facts** — uses the TypeScript compiler API to deterministically extract line count, imports/exports, functions, hooks, components, JSX renders, and call expressions (no LLM guessing involved).
-- **LLM sidecar generation** — for each file, calls a local Ollama model to produce:
-  - A full Markdown architecture-review report (`ai-reports/<file>.md`).
-  - A one-sentence `purpose` summary, schema-constrained JSON (`ai-reports/<file>.json`).
-  - An on-demand two-sentence "deep summary" of the file's architectural role, generated lazily from the dashboard and cached back into the sidecar.
-- **Knowledge graph** — merges all sidecars into `ai-reports/knowledge_graph.json`, resolving local imports (`./`, `@/`) into a dependency graph and computing `importedBy` / `importance` per file.
-- **Expo Router awareness** — infers screen routes from file paths under `src/app/` (dynamic segments, layouts, `index` routes).
-- **Deterministic risk scoring** — `dependents×3 + exports×2 + calls + lines/100`, tiered Low/Medium/High/Critical, shown per node in the graph view.
-- **Live dashboard** (`http://localhost:5959`) — real-time event stream (SSE), current file being analyzed with streaming LLM output, full-text search across the knowledge graph, completed-report viewer, and an interactive force-directed dependency graph (drag nodes, filter by category, per-node risk breakdown, click-to-generate deep AI summary).
-- **CLI query tool** (`scripts/depencies.js`) — inspects `knowledge_graph.json` without dumping raw JSON into an LLM's context window.
-
-## How it works
+The intelligence layer is split into continuous knowledge extraction, on-demand domain navigators, and a 6-gate safety validation chain:
 
 ```
-source files (*.ts/*.tsx)
-        │
-        ▼
-  watchLoop() ── hash diff vs .state.json
-        │
-        ▼
-  analyzeFile()
-    ├─ TypeScript AST  → objective facts + entities + calls + renders
-    ├─ Ollama (stream) → full Markdown report        → ai-reports/<file>.md
-    └─ Ollama (JSON)   → one-line purpose             → ai-reports/<file>.json
-        │
-        ▼
-  rebuildKnowledgeGraph() → ai-reports/knowledge_graph.json
-        │
-        ▼
-  dashboard (Bun.serve, port 5959) ── SSE /events, /graph, /report, /explain
+                          source files (*.ts / *.tsx)
+                                      │
+                                      ▼
+                        analysis.tsx (Bun Watcher)
+                                      ├─ TypeScript AST parser
+                                      └─ Local Ollama sidecar (JSON / Markdown)
+                                      │
+                                      ▼
+                         knowledge_graph.json + sidecars
+                                      │
+   ┌──────────────────────────────────┼──────────────────────────────────┐
+   ▼                                  ▼                                  ▼
+[DOMAIN NAVIGATORS]             [KNOWLEDGE GRAPH]               [CLOSED-LOOP GUARDRAIL]
+• route-navigator.js            • depencies.js                  • blast-radius.js (6 gates)
+• supabase-mapper.js              (query, file, deps, callers)    ├─ 1. TypeScript compiler
+• i18n-indexer.js                                                 ├─ 2. Blast radius / impact
+                                                                  ├─ 3. Theme token enforcer
+                                                                  ├─ 4. Zero-emoji linter
+                                                                  ├─ 5. i18n integrity check
+                                                                  └─ 6. AST code health
 ```
 
-## Requirements
+---
 
-- [Bun](https://bun.sh) — the agent (`analysis.tsx`) uses `Bun.serve` and `Bun.file` and must be run with the Bun runtime.
-- [Node.js](https://nodejs.org) — used to run the CLI query tool (`scripts/depencies.js`).
-- [Ollama](https://ollama.com) running locally at `http://localhost:11434` with:
-  - A chat/generation model matching `MODEL` in `analysis.tsx` (defaults to `gemma4:26b` — change this to a model you actually have pulled).
-  - Optionally an embeddings model (defaults to `nomic-embed-text`, override via `OLLAMA_EMBED_MODEL`) for `scripts/depencies.js similar`; without it, similarity falls back to bag-of-words comparison.
-- The `typescript` package (used via `import * as ts from "typescript"` for AST parsing). There is no `package.json` in this repo yet — install `typescript` in your project before running the agent, e.g. `bun add typescript` (or `bun add -d typescript`).
+## Tool Arsenal (CLI Reference)
 
-## Usage
-
-### Run the agent
+All tools are located under `.agents/repo-intelligence-layer/scripts/` and invoked with Node.js:
 
 ```bash
-bun run analysis.tsx
+node .agents/repo-intelligence-layer/scripts/<tool>.js <command> [args]
 ```
 
-This starts the continuous file-watch loop and the dashboard server at `http://localhost:5959` in the same process. Reports and the knowledge graph are written under `ai-reports/` in the current working directory (this directory is skipped by the scanner itself, along with `node_modules`, `.next`, `.git`, `.expo`).
+### 1. `depencies.js` — Core Knowledge Graph & AST Query Engine
+- `query <term>` — Search file paths, purposes, and entity names by substring.
+- `file <path>` — Print an objective **Identity Card** (framework, role, risk, exports, size, stability).
+- `dependents <path>` — Who imports this file? (Direct upstream dependents).
+- `deps <path>` — What does this file import? (Downstream dependencies).
+- `callers <fnName>` — AST-derived caller sites with exact file references.
+- `where <Component>` — JSX render sites across the codebase.
+- `style <Component>` — Frequently passed props summary.
+- `impact <path>` — Transitive blast radius calculation with risk rating.
+- `similar <path>` — Structurally or semantically similar modules.
+- `help` — CLI usage guide.
 
-### Query the knowledge graph
+### 2. `blast-radius.js` — 6-Gate Pre-Commit Safety Chain
+Chains 6 deterministic safety checks before changes are committed:
+```bash
+node .agents/repo-intelligence-layer/scripts/blast-radius.js <file_path>
+```
+1. **TypeScript Compilation:** Zero errors enforced via `tsc --noEmit`.
+2. **Blast Radius Analysis:** Impacted direct & indirect dependents computed from `knowledge_graph.json`.
+3. **Design Token Audit:** Rejects hardcoded Tailwind color classes and rogue hex/rgb values.
+4. **Zero-Emoji Enforcement:** Flags any user-visible emoji strings in UI/JSX.
+5. **i18n Integrity:** Flags untranslated hardcoded UI copy and validates translation bindings.
+6. **AST Code Health:** Flags silent empty catch blocks, lingering debuggers, and reckless `any` casts.
+
+Additional commands:
+- `changed` — Runs safety checks over all staged/unstaged git changes.
+- `tsc` — Standalone TypeScript validation gate.
+- `impact <path>` — Direct blast-radius analysis.
+- `full` — Full project audit summary.
+
+### 3. `code-health.js` — Zero-Dependency AST Code Health & Anti-Pattern Linter
+Scans directly via the TypeScript Compiler API with zero external lint dependencies:
+- Flags empty catch blocks (`NO_EMPTY_CATCH` - silent failures).
+- Flags lingering `console.log` / `console.info` in production code.
+- Flags abandoned `debugger` statements.
+- Flags explicit `any` escapes (`: any`, `as any`).
+- Flags Rules of Hooks violations (hooks inside loops/conditionals).
+
+Commands:
+- `file <path>` — Per-file diagnostic with line numbers and snippets.
+- `worst` — Top 10 files with the highest anti-pattern count.
+- `summary` — Clean summary table across the repository.
+- `scan` — Detailed full-project scan.
+
+### 4. `route-navigator.js` — Navigation & Route Topology
+Inspects `NavigationContainer`, stack screens, and bottom tabs:
+- `tree` — Hierarchical navigation tree (Auth / Guest stack + MainTabs).
+- `map` — Complete route roster with screen component paths and transition animations.
+- `screen <Name>` — Detailed screen identity (component file, expected `route.params`, callers).
+- `callers <Name>` — All files invoking `navigation.navigate('Name')` or `router.push()`.
+- `params <Name>` — Extracted parameter keys expected by the route.
+
+### 5. `supabase-mapper.js` — Schema, Table & RPC Mapper
+Scans `.from('table')` and `.rpc('function')` call sites, linking them with migration SQL definitions:
+- `map` — Overview of all Supabase tables, operations (SELECT, INSERT, UPSERT, DELETE), and usage count.
+- `table <name>` — Column schema (from migrations), RLS policies, filters, and consuming files.
+- `who <name>` — All files and line numbers accessing the table.
+- `rpc` — All RPC function invocations.
+- `migrations` — Registered SQL migrations with table/index breakdowns.
+- `types [service]` — Discovered TypeScript interfaces and enum types per service.
+- `rebuild` — Re-scans codebase and updates cache.
+
+### 6. `theme-audit.js` — Design Token & Single-Theme Enforcer
+Guarantees UI consistency against design rules (`var(--theme-accent)`, `theme.colors.*`):
+- Flags hardcoded Tailwind color utilities (`text-purple-500`, `bg-emerald-400`, etc.).
+- Flags static hex/rgba values inside component style sheets.
+- Commands: `worst`, `summary`, `file <path>`, `scan`.
+
+### 7. `emoji-linter.js` — Strict Zero-Emoji Enforcer
+Scans unicode blocks across UI text nodes, props, and strings:
+- Prioritizes `CRITICAL` user-facing JSX text nodes and button labels.
+- Separates runtime strings (`ERROR`) from internal logger comments (`WARNING`).
+- Commands: `ui`, `worst`, `summary`, `file <path>`, `scan`.
+
+### 8. `i18n-indexer.js` — Bidirectional Translation Bridge
+- Reverse searches human-readable Turkish/English copy to matching translation keys (`paywall.successTitle`).
+- Discovers exact consuming files and line numbers.
+- Identifies dead or orphan locale keys across `src/i18n/locales/`.
+- Commands: `query <text_or_key>`, `build`.
+
+---
+
+## Typical Agentic Workflow
+
+Autonomous coding agents follow an 8-step execution loop:
+
+```
+1. Task Arrival        → node .../depencies.js query <keyword>
+2. Identity Inspection → node .../depencies.js file <path>
+3. Side-Effect Check   → node .../depencies.js dependents <path>
+4. Route Context       → node .../route-navigator.js screen <ScreenName>
+5. Schema Context      → node .../supabase-mapper.js table <TableName>
+6. Localization        → node .../i18n-indexer.js query <text>
+7. Implementation      → Native AI edits (never PowerShell string replacement)
+8. Closed-Loop Gate    → node .../blast-radius.js <path> (All 6 gates must pass)
+```
+
+---
+
+## Live Dashboard
+
+To run the continuous file-watcher daemon alongside the web dashboard:
 
 ```bash
-node scripts/depencies.js <command> <arg>
+bun run .agents/repo-intelligence-layer/analysis.tsx
 ```
 
-| Command | Description |
-|---|---|
-| `query <term>` | Search file paths, purposes, and entity names by substring |
-| `file <path>` | Print a full "identity card" for a file (category, role, framework, size, stability, risk) |
-| `dependents <path>` | List files that import `<path>` |
-| `deps <path>` | List files/packages `<path>` imports |
-| `callers <fnName>` | List files whose AST call list references `<fnName>` |
-| `where <Component>` | Which files render `<Component>` in JSX |
-| `style <Component>` | Most-used `name` prop values on `<Component>` (e.g. icon sets) |
-| `impact <path>` | Transitive dependents of `<path>` plus a LOW/MEDIUM/HIGH risk level |
-| `change <path>` | Which screens (routes) are affected if `<path>` changes |
-| `similar <path>` | Most similar files, via Ollama embeddings if available, else word-based fallback |
-
-Paths are matched exactly as stored in `knowledge_graph.json` (e.g. `src/app/quiz.tsx`). Each command prints a freshness banner warning if source files have changed since the graph was last generated.
-
-## Output layout
-
-```
-ai-reports/
-  .state.json               file hash → last-analyzed metadata (used to detect changes)
-  .status.json              latest dashboard status snapshot (debug/persistence)
-  knowledge_graph.json       merged graph of all analyzed files
-  embeddings_cache.json      cached Ollama embeddings for `similar`
-  <mirrored source path>.md   per-file Markdown architecture report
-  <mirrored source path>.json per-file sidecar (objective facts, purpose, graph, entities)
-```
-
-## Notes
-
-- The dashboard UI and the LLM prompts in `analysis.tsx` are written in Turkish (`lang="tr"`, prompts explicitly request Turkish output); this README documents the tool in English.
-- `scripts/depencies.js` is the actual filename in this repo (note the missing "d" — it's a typo for "dependencies.js"); invoke it as shown above.
-- The categorization logic in the dashboard's dependency graph (`categoryOf`) and in `scripts/depencies.js` (`categorizeNode`) assumes a `src/app`, `src/components`, `src/hooks`, `src/services`, `src/theme`, `src/i18n` layout — adjust these if analyzing a repo with a different structure.
-
-## Roadmap
-
-- [x] AST extraction
-- [x] Semantic purpose generation
-- [x] Dependency graph
-- [x] Identity cards
-- [x] Impact analysis
-- [ ] Incremental AI change summaries
-- [ ] Semantic evolution history
-- [ ] Cross-repository knowledge graphs
-- [ ] MCP server
+- **Dashboard:** `http://localhost:5959`
+- **Streaming SSE:** Real-time event stream of active file changes and AST updates.
+- **Interactive Knowledge Graph:** Force-directed dependency topology with risk scoring.
